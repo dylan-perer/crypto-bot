@@ -1,0 +1,25 @@
+{
+  "name": "trading_bot",
+  "version": "1.0.0",
+  "description": "trading bot to automatically trade binance futures using trading view custom signals",
+  "main": "index.js",
+  "scripts": {
+    "dev": "nodemon ./app/index.js"
+  },
+  "keywords": [
+    "bot",
+    "trading",
+    "binance"
+  ],
+  "author": "Aiden Perera",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^8.2.0",
+    "express": "^4.17.1",
+    "mail-listener5": "^2.0.2",
+    "mail-notifier": "^0.5.0",
+    "node-binance-api": "^0.12.4",
+    "node-color-log": "^5.2.0",
+    "use-strict": "^1.0.1"
+  }
+}
