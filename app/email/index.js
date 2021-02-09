@@ -54,13 +54,17 @@ const startListening = async (onAlert) => {
   mailListener.on("server:disconnected", function () {
     log("imapDisconnected");
     log("Attempting to restart");
-    mailListener.start();
+    // mailListener.start();
   });
 
   mailListener.on("error", function (err) {
-    logError(`imaperror ${err}`);
-    log("Attempting to restart");
-    mailListener.start();
+    if (err) {
+      logError(`imaperror ${err}`);
+      log("Atempting to restart...");
+      setTimeout(() => {
+        mailListener.start();
+      }, 1200);
+    }
   });
 
   mailListener.on("mail", function (mail, seqno, attributes) {
