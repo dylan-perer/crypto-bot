@@ -15,16 +15,20 @@ const binance = new Binance().options({
 });
 
 async function getMaxTradeAmount(liveSymbolData) {
-  let account = await binance.futuresAccount();
-  let balance = account.assets[0].walletBalance;
+  try {
+    let account = await binance.futuresAccount();
+    let balance = account.assets[0].walletBalance;
 
-  //Calculating max trade amount
-  let maxTradeAmount =
-    Math.floor(((balance * config.margin) / liveSymbolData.close) * 1000) /
-    1000;
+    //Calculating max trade amount
+    let maxTradeAmount =
+      Math.floor(((balance * config.margin) / liveSymbolData.close) * 1000) /
+      1000;
 
-  // error margin of 0.01% just to be safe.
-  return Math.floor((maxTradeAmount - maxTradeAmount * 0.01) * 1000) / 1000;
+    // error margin of 0.01% just to be safe.
+    return Math.floor((maxTradeAmount - maxTradeAmount * 0.05) * 1000) / 1000;
+  } catch (error) {
+    logError(`FAILED TO get max trade amount ::: ${error}`);
+  }
 }
 
 function logOrder(order) {
@@ -34,28 +38,43 @@ function logOrder(order) {
 }
 
 async function goLong(liveSymbolData) {
-  const maxTradeAmount = await getMaxTradeAmount(liveSymbolData);
-  log(maxTradeAmount);
+  try {
+    const maxTradeAmount = await getMaxTradeAmount(liveSymbolData);
+    log(maxTradeAmount);
 
-  logInfo("Going long...");
-  const order = await binance.futuresMarketBuy(config.symbol, maxTradeAmount, {
-    newOrderRespType: "RESULT",
-  });
-
-  logOrder(order);
-  return order;
+    logInfo("Going long...");
+    const order = await binance.futuresMarketBuy(
+      config.symbol,
+      maxTradeAmount,
+      {
+        newOrderRespType: "RESULT",
+      }
+    );
+    logOrder(order);
+    return order;
+  } catch (error) {
+    logError(`FAILED to go long ::: ${error}`);
+  }
 }
 
 async function goShort(liveSymbolData) {
-  const maxTradeAmount = await getMaxTradeAmount(liveSymbolData);
-  log(maxTradeAmount);
+  try {
+    const maxTradeAmount = await getMaxTradeAmount(liveSymbolData);
+    log(maxTradeAmount);
 
-  logInfo("Going short...");
-  const order = await binance.futuresMarketSell(config.symbol, maxTradeAmount, {
-    newOrderRespType: "RESULT",
-  });
-  logOrder(order);
-  return order;
+    logInfo("Going short...");
+    const order = await binance.futuresMarketSell(
+      config.symbol,
+      maxTradeAmount,
+      {
+        newOrderRespType: "RESULT",
+      }
+    );
+    logOrder(order);
+    return order;
+  } catch (error) {
+    logError(`FAILED to go short ::: ${error}`);
+  }
 }
 
 async function trade(price, side, liveSymbolData, currentTradeSide) {
@@ -80,45 +99,52 @@ async function trade(price, side, liveSymbolData, currentTradeSide) {
     }
     return currentTradeSide;
   } catch (error) {
-    logError("" + error);
+    logError(`FAILED to trade ::: ${error}`);
   }
 }
 
 const bot = async () => {
-  const account = await binance.futuresAccount();
-  let streamReady = false;
-  let currentTradeSide = null;
+  try {
+    const account = await binance.futuresAccount();
+    let streamReady = false;
+    let currentTradeSide = null;
 
-  logInfo(
-    `ACCOUNT:: USDT: $${account.assets[0].walletBalance} BNB:${account.assets[1].walletBalance}`
-  );
+    logInfo(
+      `ACCOUNT:: USDT: $${account.assets[0].walletBalance} BNB:${account.assets[1].walletBalance}`
+    );
 
-  let liveSymbolData = null;
+    let liveSymbolData = null;
 
-  binance.futuresMiniTickerStream(config.symbol, async (symbolData) => {
-    //Intialising bot
-    liveSymbolData = symbolData;
+    binance.futuresMiniTickerStream(config.symbol, async (symbolData) => {
+      //Intialising bot
+      liveSymbolData = symbolData;
 
-    //when price stream is ready
-    if (!streamReady && liveSymbolData) {
-      streamReady = true;
+      //when price stream is ready
+      if (!streamReady && liveSymbolData) {
+        streamReady = true;
 
-      //set leverage
-      await binance.futuresLeverage(config.symbol, config.margin);
-      log("Adjusting leverage complete...");
+        //set leverage
+        await binance.futuresLeverage(config.symbol, config.margin);
+        log("Adjusting leverage complete...");
 
-      //start email listener
-      startListening(async (price, side) => {
-        currentTradeSide = await trade(
-          price,
-          side,
-          liveSymbolData,
-          currentTradeSide
+        logInfo(
+          `Max trading amount is ${await getMaxTradeAmount(liveSymbolData)}`
         );
-      });
-    }
-    if (!symbolData) logError("failed to get symbol stream...");
-  });
+        //start email listener
+        startListening(async (price, side) => {
+          currentTradeSide = await trade(
+            price,
+            side,
+            liveSymbolData,
+            currentTradeSide
+          );
+        });
+      }
+      if (!symbolData) logError("failed to get symbol stream...");
+    });
+  } catch (error) {
+    logError(`FAILED to start bot ::: ${error}`);
+  }
 };
 
 module.exports = { bot: bot };

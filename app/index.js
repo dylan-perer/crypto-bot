@@ -5,6 +5,7 @@ const { logError, logWarn, log, logInfo } = require("./logger");
 const { bot } = require("./bot");
 
 const app = express();
+const PORT = 5500;
 
 app.get("/api/account", async (req, res) => {
   try {
@@ -19,7 +20,7 @@ app.get("/api/account", async (req, res) => {
   }
 });
 
-app.listen(5500, () => {
+app.listen(PORT, () => {
   log("App started...");
 });
 

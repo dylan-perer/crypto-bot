@@ -17,6 +17,7 @@
   "dependencies": {
     "dotenv": "^8.2.0",
     "express": "^4.17.1",
+    "mail-listener2": "^0.3.1",
     "mail-listener5": "^2.0.2",
     "mail-notifier": "^0.5.0",
     "node-binance-api": "^0.12.4",
