@@ -5,7 +5,7 @@ const { logError, logWarn, log, logInfo } = require("../logger");
 const config = {
   symbol: "ETHUSDT",
   margin: 4,
-  shortStoploss: 3,
+  shortStoploss: 0.01,
   shortTakeprofit: 1.2,
 };
 const LONG = "long";
@@ -71,7 +71,7 @@ async function goLong(liveSymbolData) {
   }
 }
 
-async function goShort(liveSymbolData) {
+async function goShort(liveSymbolData, isExiting = false) {
   try {
     const maxTradeAmount = await getMaxTradeAmount(liveSymbolData);
     log(maxTradeAmount);
@@ -84,34 +84,36 @@ async function goShort(liveSymbolData) {
         newOrderRespType: "RESULT",
       }
     );
-    currentTrade.executedQty = order.executedQty;
     logOrder(order);
 
-    const orderAvgPrice = parseFloat(order.avgPrice);
+    if (!isExiting) {
+      currentTrade.executedQty = order.executedQty;
 
-    currentTrade.stopLossPrice =
-      orderAvgPrice + (orderAvgPrice / 100) * config.shortStoploss;
+      const orderAvgPrice = parseFloat(order.avgPrice);
 
-    currentTrade.takeProfitPrice =
-      orderAvgPrice - (orderAvgPrice / 100) * config.shortTakeprofit;
+      currentTrade.stopLossPrice =
+        orderAvgPrice + (orderAvgPrice / 100) * config.shortStoploss;
 
-    const takeProfitOrder = await binance.futuresBuy(
-      config.symbol,
-      order.executedQty,
-      currentTrade.takeProfitPrice.toFixed(2)
-    );
+      currentTrade.takeProfitPrice =
+        orderAvgPrice - (orderAvgPrice / 100) * config.shortTakeprofit;
 
-    currentTrade.orderId = takeProfitOrder.orderId;
-    logInfo(
-      `TAKE PROFIT ORDER:: side:${takeProfitOrder.side} symbol:${takeProfitOrder.symbol} price: ${takeProfitOrder.price}`
-    );
+      const takeProfitOrder = await binance.futuresBuy(
+        config.symbol,
+        order.executedQty,
+        currentTrade.takeProfitPrice.toFixed(2)
+      );
 
-    console.log("CURENT TRADE obj");
-    console.info(currentTrade);
-    currentTrade.side = SHORT;
-    currentTrade.listenToStoploss = true;
-    checkStopLoss();
+      currentTrade.orderId = takeProfitOrder.orderId;
+      logInfo(
+        `TAKE PROFIT ORDER:: side:${takeProfitOrder.side} symbol:${takeProfitOrder.symbol} price: ${takeProfitOrder.price}`
+      );
 
+      console.log("CURENT TRADE obj");
+      console.info(currentTrade);
+      currentTrade.side = SHORT;
+      currentTrade.listenToStoploss = true;
+      checkStopLoss();
+    }
     return order;
   } catch (error) {
     logError(`FAILED to go short ::: ${error}`);
@@ -123,6 +125,7 @@ async function trade(price, side, liveSymbolData, currentTradeSide) {
   try {
     if (side === LONG) {
       if (currentTradeSide === SHORT) {
+        //check current trade side
         await goLong(liveSymbolData); //to get out of the current trade.
         await goLong(liveSymbolData);
       } else {
@@ -131,7 +134,7 @@ async function trade(price, side, liveSymbolData, currentTradeSide) {
       currentTradeSide = LONG;
     } else if (side === SHORT) {
       if (currentTradeSide === LONG) {
-        await goShort(liveSymbolData);
+        await goShort(liveSymbolData, true);
         await goShort(liveSymbolData);
       } else {
         await goShort(liveSymbolData);
@@ -145,7 +148,7 @@ async function trade(price, side, liveSymbolData, currentTradeSide) {
 }
 
 const checkStopLoss = async () => {
-  logError("CHECKCING STOP LOSS>....");
+  // logError("CHECKCING STOP LOSS>....");
   if (liveSymbolData.close >= currentTrade.stopLossPrice) {
     currentTrade.listenToStoploss = false;
 
@@ -154,7 +157,7 @@ const checkStopLoss = async () => {
       config.symbol
     );
 
-    console.log("CANCELED ORDER", canceledTakeProfitOrder);
+    console.log("CANCELED ORDER...");
 
     const stopLossOrder = await binance.futuresMarketBuy(
       config.symbol,
@@ -164,7 +167,7 @@ const checkStopLoss = async () => {
       }
     );
 
-    console.log("STOP LOSS ORDEER", stopLossOrder);
+    console.log("STOP LOSS MARKE ORDER PLACED...");
 
     //close short position.
     logInfo(`Short stoploss hit!`);
