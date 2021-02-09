@@ -2,9 +2,9 @@ const notifier = require("mail-notifier");
 const { logError, logWarn, log, logInfo } = require("../logger");
 
 const imap = {
-  user: "stonks919@gmail.com",
+  user: "stonks9199@outlook.com",
   password: "Wow0211805656",
-  host: "imap.gmail.com",
+  host: "outlook.office365.com",
   port: 993, // imap port
   tls: true, // use secure connection
   tlsOptions: { rejectUnauthorized: false },
@@ -22,6 +22,7 @@ const startListening = (onAlert) => {
 };
 
 const parseAlert = (mail, onAlert) => {
+  log(mail.subject);
   try {
     const regex = /(\d+.\d+|\d+)/g;
     const alertDetails = mail.subject.match(regex);

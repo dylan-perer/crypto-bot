@@ -4,7 +4,7 @@ const { logError, logWarn, log, logInfo } = require("../logger");
 
 const config = {
   symbol: "ETHUSDT",
-  margin: 3,
+  margin: 4,
 };
 const LONG = "long";
 const SHORT = "short";

@@ -4,6 +4,7 @@
   "description": "trading bot to automatically trade binance futures using trading view custom signals",
   "main": "index.js",
   "scripts": {
+    "start": "nodemon ./app/index.js",
     "dev": "nodemon ./app/index.js"
   },
   "keywords": [
