@@ -52,13 +52,13 @@ const createNewMailListener = (onAlert) => {
 
   mailListener.on("server:connected", function () {
     log("imap connected...");
-    if (!done) {
-      setTimeout(() => {
-        log("disconecting...");
-        mailListener.stop();
-        done = true;
-      }, 2000);
-    }
+    // if (!done) {
+    //   setTimeout(() => {
+    //     log("disconecting...");
+    //     mailListener.stop();
+    //     done = true;
+    //   }, 2000);
+    // }
   });
 
   mailListener.on("server:disconnected", function () {
