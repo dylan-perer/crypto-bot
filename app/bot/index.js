@@ -4,8 +4,9 @@ const { logError, logWarn, log, logInfo } = require("../logger");
 
 const config = {
   symbol: "ETHUSDT",
-  margin: 4,
+  margin: 5,
   shortStoploss: 3,
+  maxStoplossDivergence: 6,
   shortTakeprofit: 1.01,
 };
 const LONG = "long";
@@ -185,6 +186,7 @@ const bot = async () => {
     const account = await binance.futuresAccount();
     let streamReady = false;
     let isListeningToStopLoss = true;
+    log(`config:: ${JSON.stringify(config)}`);
     logInfo(
       `ACCOUNT:: USDT: $${account.assets[0].walletBalance} BNB:${account.assets[1].walletBalance}`
     );
