@@ -26,7 +26,7 @@ app.listen(PORT, () => {
 
 const config = {
   symbol: "ETHUSDT",
-  margin: 5,
+  margin: 6,
   shortStoploss: 2,
   shortTakeprofit: 1.02,
 
