@@ -2,7 +2,7 @@ require("use-strict");
 require("dotenv").config();
 const express = require("express");
 const { logError, logWarn, log, logInfo } = require("./logger");
-const { bot } = require("./bot");
+const Bot = require("./bot");
 
 const app = express();
 const PORT = 5500;
@@ -24,4 +24,17 @@ app.listen(PORT, () => {
   log("App started...");
 });
 
-bot();
+const config = {
+  symbol: "ETHUSDT",
+  margin: 5,
+  shortStoploss: 2,
+  shortTakeprofit: 1.02,
+
+  longStoploss: 7,
+  longTakeprofit: 6,
+};
+
+let bot = new Bot(config, true);
+setTimeout(() => {
+  bot.startBot();
+}, 3000);
