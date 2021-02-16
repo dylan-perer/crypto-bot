@@ -213,7 +213,6 @@ module.exports = class Bot {
 
   longExitListener = async () => {
     try {
-      logWarn("(LONG) Listening for a exit..");
       const { executedQty } = await this.getOrderStatus(
         this.state.takeProfitOrderId
       );
@@ -250,7 +249,6 @@ module.exports = class Bot {
 
   shortExitListener = async () => {
     try {
-      logWarn("(SHORT) Listening for a exit..");
       const { executedQty } = await this.getOrderStatus(
         this.state.takeProfitOrderId
       );
@@ -319,6 +317,7 @@ module.exports = class Bot {
         `State after a short position is set ${JSON.stringify(this.state)}`,
         this.debug
       );
+      logWarn("(SHORT) Listening for a exit..");
       this.shortExitListener();
     } catch (error) {
       logError(`Erorr going short ::: ${error}`);
@@ -362,6 +361,7 @@ module.exports = class Bot {
         `State after a long position is set ${JSON.stringify(this.state)}`,
         this.debug
       );
+      logWarn("(LONG) Listening for a exit..");
       this.longExitListener();
     } catch (error) {
       logError(`Erorr going long ::: ${error}`);
