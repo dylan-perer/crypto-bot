@@ -70,8 +70,12 @@ module.exports = class Bot {
   }
 
   async getBalanceInUSDT() {
-    const account = await this.binance.futuresAccount();
-    return account.assets[0].walletBalance;
+    try {
+      const account = await this.binance.futuresAccount();
+      return account.assets[0].walletBalance;
+    } catch (error) {
+      logError(`Error getting balance in USDT ::: ${error}`);
+    }
   }
 
   //Calculate the maximum tradeable amount
@@ -100,155 +104,184 @@ module.exports = class Bot {
   }
 
   //Price stream tick, updates when price changes
-  tick = async (symbolData) => {
+  tick = (symbolData) => {
     this.state.currentPrice = symbolData.close;
     this.state.isStreamReady = true;
   };
 
   placeMarketOrderBuy = async (msg = "Long") => {
-    const maxTradeAmount = await this.getMaxTradeAmount();
+    try {
+      const maxTradeAmount = await this.getMaxTradeAmount();
 
-    const order = await this.binance.futuresMarketBuy(
-      this.config.symbol,
-      maxTradeAmount,
-      {
-        newOrderRespType: "RESULT",
-      }
-    );
-    let { orderId, symbol, status, avgPrice, origQty } = order;
-    logInfo(
-      `${msg} market order placed. id: ${orderId} symbol: ${symbol} status: ${status} avgPrice: ${avgPrice} origQty: ${origQty}`
-    );
-    return order;
+      const order = await this.binance.futuresMarketBuy(
+        this.config.symbol,
+        maxTradeAmount,
+        {
+          newOrderRespType: "RESULT",
+        }
+      );
+      let { orderId, symbol, status, avgPrice, origQty } = order;
+      logInfo(
+        `${msg} market order placed. id: ${orderId} symbol: ${symbol} status: ${status} avgPrice: ${avgPrice} origQty: ${origQty}`
+      );
+      return order;
+    } catch (error) {
+      logError(`Failed to place market buy order ::: ${error}`);
+    }
   };
 
   placeMarketOrderSell = async (msg = "Short") => {
-    const maxTradeAmount = await this.getMaxTradeAmount();
+    try {
+      const maxTradeAmount = await this.getMaxTradeAmount();
 
-    const order = await this.binance.futuresMarketSell(
-      this.config.symbol,
-      maxTradeAmount,
-      {
-        newOrderRespType: "RESULT",
-      }
-    );
-    let { orderId, symbol, status, avgPrice, origQty } = order;
-    logInfo(
-      `${msg} market order placed. id: ${orderId} symbol: ${symbol} status: ${status} avgPrice: ${avgPrice} origQty: ${origQty}`
-    );
-    return order;
+      const order = await this.binance.futuresMarketSell(
+        this.config.symbol,
+        maxTradeAmount,
+        {
+          newOrderRespType: "RESULT",
+        }
+      );
+      let { orderId, symbol, status, avgPrice, origQty } = order;
+      logInfo(
+        `${msg} market order placed. id: ${orderId} symbol: ${symbol} status: ${status} avgPrice: ${avgPrice} origQty: ${origQty}`
+      );
+      return order;
+    } catch (error) {
+      logError(`Failed to place market sell order ::: ${error}`);
+    }
   };
 
   onAlert = async (price, side) => {
-    if (side === LONG) {
-      if (this.state.side === SHORT) {
-        //stop listening to exit
-        this.state.listenToShortExit = false;
-        //cancel takeprofit order
-        this.cancelLimitOrder(this.state.takeProfitOrderId);
-        //exit short position
-        const exitShort = await this.placeMarketOrderBuy("Exit short");
-        logInfo(`Current short position was exited.`);
-        debug(`${JSON.stringify(exitShort)}`, this.debug);
+    try {
+      if (side === LONG) {
+        if (this.state.side === SHORT) {
+          //stop listening to exit
+          this.state.listenToShortExit = false;
+          //cancel takeprofit order
+          this.cancelLimitOrder(this.state.takeProfitOrderId);
+          //exit short position
+          const exitShort = await this.placeMarketOrderBuy("Exit short");
+          logInfo(`Current short position was exited.`);
+          debug(`${JSON.stringify(exitShort)}`, this.debug);
 
-        //go into new long position
-        this.long();
-      } else {
-        this.long();
+          //go into new long position
+          this.long();
+        } else {
+          this.long();
+        }
+      } else if (side === SHORT) {
+        if (this.state.side === LONG) {
+          //stop listening to exit
+          this.state.listenToLongExit = false;
+          //cancel takeprofit order
+          this.cancelLimitOrder(this.state.takeProfitOrderId);
+          //exit short position
+          const exitLong = await this.placeMarketOrderSell("Exit long");
+          logInfo(`Current long position was exited.`);
+          debug(`${JSON.stringify(exitLong)}`, this.debug);
+          //go into new long position
+          this.short();
+        } else {
+          this.short();
+        }
       }
-    } else if (side === SHORT) {
-      if (this.state.side === LONG) {
-        //stop listening to exit
-        this.state.listenToLongExit = false;
-        //cancel takeprofit order
-        this.cancelLimitOrder(this.state.takeProfitOrderId);
-        //exit short position
-        const exitLong = await this.placeMarketOrderSell("Exit long");
-        logInfo(`Current long position was exited.`);
-        debug(`${JSON.stringify(exitLong)}`, this.debug);
-        //go into new long position
-        this.short();
-      } else {
-        this.short();
-      }
+    } catch (error) {
+      logError(`Failed on alert ::: ${error}`);
     }
   };
 
   getOrderStatus = async (orderId) => {
-    return await this.binance.futuresOrderStatus(this.config.symbol, {
-      orderId: "" + orderId,
-    });
+    try {
+      return await this.binance.futuresOrderStatus(this.config.symbol, {
+        orderId: "" + orderId,
+      });
+    } catch (error) {
+      logError(`Failed to get order status ::: ${error}`);
+    }
   };
 
   cancelLimitOrder = async (orderId) => {
-    return await this.binance.futuresCancel(this.config.symbol, {
-      orderId: "" + orderId,
-    });
+    try {
+      return await this.binance.futuresCancel(this.config.symbol, {
+        orderId: "" + orderId,
+      });
+    } catch (error) {
+      logError(`Failed to cancel limit order ::: ${error}`);
+      return null;
+    }
   };
 
   longExitListener = async () => {
-    logWarn("(LONG) Listening for a exit..");
-    const { executedQty } = await this.getOrderStatus(
-      this.state.takeProfitOrderId
-    );
-    if (this.state.listenToLongExit) {
-      //Check if takeprofit order is filled
-      if (executedQty === this.state.executedQty) {
-        //take profit order is complete
-        logInfo(`Take profit order comepleted!`);
-        this.state.listenToLongExit = false;
-        this.state.side = null;
-      }
-      //check if stoploss is met
-      else if (this.state.currentPrice <= this.state.longStoploss) {
-        //cancel takeprofit
-        await this.cancelLimitOrder(this.state.takeProfitOrderId);
+    try {
+      logWarn("(LONG) Listening for a exit..");
+      const { executedQty } = await this.getOrderStatus(
+        this.state.takeProfitOrderId
+      );
+      if (this.state.listenToLongExit) {
+        //Check if takeprofit order is filled
+        if (executedQty === this.state.executedQty) {
+          //take profit order is complete
+          logInfo(`Take profit order comepleted!`);
+          this.state.listenToLongExit = false;
+          this.state.side = null;
+        }
+        //check if stoploss is met
+        else if (this.state.currentPrice <= this.state.longStoploss) {
+          //cancel takeprofit
+          await this.cancelLimitOrder(this.state.takeProfitOrderId);
 
-        //market exit
-        const stopLossOrder = await this.placeMarketOrderSell(
-          "(LONG) stoploss"
-        );
+          //market exit
+          const stopLossOrder = await this.placeMarketOrderSell(
+            "(LONG) stoploss"
+          );
 
-        this.state.listenToLongExit = false;
-        this.state.side = null;
-      } else {
-        setTimeout(() => {
-          this.longExitListener();
-        }, 1000);
+          this.state.listenToLongExit = false;
+          this.state.side = null;
+        } else {
+          setTimeout(() => {
+            this.longExitListener();
+          }, 1000);
+        }
       }
+    } catch (error) {
+      logError(`Failed to listen for long exit ::: ${error}`);
     }
   };
 
   shortExitListener = async () => {
-    logWarn("(SHORT) Listening for a exit..");
-    const { executedQty } = await this.getOrderStatus(
-      this.state.takeProfitOrderId
-    );
-    if (this.state.listenToShortExit) {
-      //Check if takeprofit order is filled
-      if (executedQty === this.state.executedQty) {
-        //take profit order is complete
-        logInfo(`Take profit order comepleted!`);
-        this.state.listenToShortExit = false;
-        this.state.side = null;
-      }
-      //check if stoploss is met
-      else if (this.state.currentPrice >= this.state.shortStoploss) {
-        //cancel takeprofit
-        await this.cancelLimitOrder(this.state.takeProfitOrderId);
+    try {
+      logWarn("(SHORT) Listening for a exit..");
+      const { executedQty } = await this.getOrderStatus(
+        this.state.takeProfitOrderId
+      );
+      if (this.state.listenToShortExit) {
+        //Check if takeprofit order is filled
+        if (executedQty === this.state.executedQty) {
+          //take profit order is complete
+          logInfo(`Take profit order comepleted!`);
+          this.state.listenToShortExit = false;
+          this.state.side = null;
+        }
+        //check if stoploss is met
+        else if (this.state.currentPrice >= this.state.shortStoploss) {
+          //cancel takeprofit
+          await this.cancelLimitOrder(this.state.takeProfitOrderId);
 
-        //market exit
-        const stopLossOrder = await this.placeMarketOrderBuy(
-          "(SHORT) stoploss"
-        );
+          //market exit
+          const stopLossOrder = await this.placeMarketOrderBuy(
+            "(SHORT) stoploss"
+          );
 
-        this.state.listenToShortExit = false;
-        this.state.side = null;
-      } else {
-        setTimeout(() => {
-          this.shortExitListener();
-        }, 1000);
+          this.state.listenToShortExit = false;
+          this.state.side = null;
+        } else {
+          setTimeout(() => {
+            this.shortExitListener();
+          }, 1000);
+        }
       }
+    } catch (error) {
+      logError(`Failed to listen for short exit ::: ${error}`);
     }
   };
 
@@ -288,7 +321,7 @@ module.exports = class Bot {
       );
       this.shortExitListener();
     } catch (error) {
-      logError(`Erorr going short ${error}`);
+      logError(`Erorr going short ::: ${error}`);
       //send err notifcation
     }
   };
@@ -331,26 +364,30 @@ module.exports = class Bot {
       );
       this.longExitListener();
     } catch (error) {
-      logError(`Erorr going short ${error}`);
+      logError(`Erorr going long ::: ${error}`);
       //send err notifcation
     }
   };
 
   startBot = async () => {
-    if (this.state.currentPrice !== null && this.state.isStreamReady) {
-      startListening(this.onAlert);
-      log(`Bot has started...`);
-      logInfo(`Balance is ${await this.getBalanceInUSDT()} USDT`);
-      const margin = await this.binance.futuresLeverage(
-        this.config.symbol,
-        this.config.margin
-      );
-      logInfo(`Margin adjusted to x${margin.leverage}`);
-      logInfo(
-        `Your max trading amount is  ${await this.getMaxTradeAmount(
-          this.state.currentPrice
-        )}`
-      );
+    try {
+      if (this.state.currentPrice !== null && this.state.isStreamReady) {
+        startListening(this.onAlert);
+        log(`Bot has started...`);
+        logInfo(`Balance is ${await this.getBalanceInUSDT()} USDT`);
+        const margin = await this.binance.futuresLeverage(
+          this.config.symbol,
+          this.config.margin
+        );
+        logInfo(`Margin adjusted to x${margin.leverage}`);
+        logInfo(
+          `Your max trading amount is  ${await this.getMaxTradeAmount(
+            this.state.currentPrice
+          )}`
+        );
+      }
+    } catch (error) {
+      logError(`Failed to start the bot ::: ${error}`);
     }
   };
 };
