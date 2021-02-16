@@ -98,9 +98,77 @@ module.exports = class Bot {
     this.state.isStreamReady = true;
   };
 
+  placeMarketOrderBuy = async (msg = "Long") => {
+    const maxTradeAmount = await this.getMaxTradeAmount();
+
+    const order = await this.binance.futuresMarketBuy(
+      this.config.symbol,
+      maxTradeAmount,
+      {
+        newOrderRespType: "RESULT",
+      }
+    );
+    let { orderId, symbol, status, avgPrice, origQty } = order;
+    logInfo(
+      `${msg} market order placed. id: ${orderId} symbol: ${symbol} status: ${status} avgPrice: ${avgPrice} origQty: ${origQty}`
+    );
+    return order;
+  };
+
+  placeMarketOrderSell = async (msg = "Short") => {
+    const maxTradeAmount = await this.getMaxTradeAmount();
+
+    const order = await this.binance.futuresMarketSell(
+      this.config.symbol,
+      maxTradeAmount,
+      {
+        newOrderRespType: "RESULT",
+      }
+    );
+    let { orderId, symbol, status, avgPrice, origQty } = order;
+    logInfo(
+      `${msg} market order placed. id: ${orderId} symbol: ${symbol} status: ${status} avgPrice: ${avgPrice} origQty: ${origQty}`
+    );
+    return order;
+  };
+
   onAlert = async (price, side) => {
-    if (side === LONG) this.long();
-    else if (side === SHORT) this.short();
+    if (side === LONG) {
+      if (this.state.side === SHORT) {
+        //stop listening to exit
+        this.state.listenToShortExit = false;
+        //cancel takeprofit order
+        this.cancelLimitOrder(this.state.takeProfitOrderId);
+        //exit short position
+        const exitShort = await this.placeMarketOrderBuy("Exit short");
+        logInfo(
+          `New alert to go long came, current short position was exited.`
+        );
+        debug(`${JSON.stringify(exitShort)}`, this.debug);
+
+        //go into new long position
+        this.long();
+      } else {
+        this.long();
+      }
+    } else if (side === SHORT) {
+      if (this.state.side === LONG) {
+        //stop listening to exit
+        this.state.listenToLongExit = false;
+        //cancel takeprofit order
+        this.cancelLimitOrder(this.state.takeProfitOrderId);
+        //exit short position
+        const exitLong = await this.placeMarketOrderSell("Exit long");
+        logInfo(
+          `New alert to go short came, current long position was exited.`
+        );
+        debug(`${JSON.stringify(exitLong)}`, this.debug);
+        //go into new long position
+        this.short();
+      } else {
+        this.short();
+      }
+    }
   };
 
   getOrderStatus = async (orderId) => {
@@ -137,6 +205,7 @@ module.exports = class Bot {
         );
 
         this.state.listenToLongExit = false;
+        this.state.side = null;
       } else if (this.config.longTakeprofitPercentage !== null) {
         const { executedQty } = await this.getOrderStatus(
           this.state.takeProfitOrderId
@@ -145,6 +214,7 @@ module.exports = class Bot {
           //take profit order is complete
           logInfo(`Take profit order comepleted!`);
           this.state.listenToLongExit = false;
+          this.state.side = null;
         } else {
           setTimeout(() => {
             this.longExitListener();
@@ -183,10 +253,12 @@ module.exports = class Bot {
         );
 
         this.state.listenToShortExit = false;
+        this.state.side = null;
       } else if (executedQty === this.state.executedQty) {
         //take profit order is complete
         logInfo(`Take profit order comepleted!`);
         this.state.listenToShortExit = false;
+        this.state.side = null;
       } else {
         setTimeout(() => {
           this.shortExitListener();
@@ -197,20 +269,8 @@ module.exports = class Bot {
 
   short = async () => {
     try {
-      const maxTradeAmount = await this.getMaxTradeAmount();
-
       //place short market order
-      const order = await this.binance.futuresMarketSell(
-        this.config.symbol,
-        maxTradeAmount,
-        {
-          newOrderRespType: "RESULT",
-        }
-      );
-      let { orderId, symbol, status, avgPrice, origQty } = order;
-      logInfo(
-        `Short market order placed. id: ${orderId} symbol: ${symbol} status: ${status} avgPrice: ${avgPrice} origQty: ${origQty}`
-      );
+      const order = await this.placeMarketOrderSell();
 
       //calulate and set take profit & stop loss values
       const orderAvgPrice = parseFloat(order.avgPrice);
@@ -230,6 +290,7 @@ module.exports = class Bot {
       );
 
       this.state.takeProfitOrderId = takeProfitOrder.orderId;
+      this.state.side = SHORT;
       logInfo(
         `Take profit limit order placed. id: ${takeProfitOrder.orderId} symbol: ${takeProfitOrder.symbol} status: ${takeProfitOrder.status} price: ${takeProfitOrder.price} origQty: ${takeProfitOrder.origQty} executedQty: ${takeProfitOrder.executedQty}`
       );
@@ -249,20 +310,8 @@ module.exports = class Bot {
 
   long = async () => {
     try {
-      const maxTradeAmount = await this.getMaxTradeAmount();
-
       //place short market order
-      const order = await this.binance.futuresMarketBuy(
-        this.config.symbol,
-        maxTradeAmount,
-        {
-          newOrderRespType: "RESULT",
-        }
-      );
-      let { orderId, symbol, status, avgPrice, origQty } = order;
-      logInfo(
-        `Long market order placed. id: ${orderId} symbol: ${symbol} status: ${status} avgPrice: ${avgPrice} origQty: ${origQty}`
-      );
+      const order = await this.placeMarketOrderBuy();
 
       //calulate and set take profit & stop loss values
       const orderAvgPrice = parseFloat(order.avgPrice);
@@ -284,6 +333,8 @@ module.exports = class Bot {
         );
 
         this.state.takeProfitOrderId = takeProfitOrder.orderId;
+        this.state.side = LONG;
+
         logInfo(
           `Take profit limit order placed. id: ${takeProfitOrder.orderId} symbol: ${takeProfitOrder.symbol} status: ${takeProfitOrder.status} price: ${takeProfitOrder.price} origQty: ${takeProfitOrder.origQty} executedQty: ${takeProfitOrder.executedQty}`
         );
