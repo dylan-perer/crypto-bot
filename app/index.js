@@ -26,12 +26,15 @@ app.listen(PORT, () => {
 
 const config = {
   symbol: "ETHUSDT",
-  margin: 6,
-  shortStoploss: 2,
-  shortTakeprofit: 1.02,
+  margin: 1,
+  // shortStoploss: 2,
+  // shortTakeprofit: 1.02,
 
-  longStoploss: 7,
-  longTakeprofit: 6,
+  // longStoploss: 7,
+  // longTakeprofit: 6,
+
+  shortStoploss: 0.01,
+  shortTakeprofit: 6,
 };
 
 let bot = new Bot(config, true);
