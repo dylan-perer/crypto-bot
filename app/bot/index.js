@@ -21,6 +21,13 @@ module.exports = class Bot {
       longStoploss,
       longTakeprofit,
     },
+    {
+      alreadySide,
+      alreadyEntryPrice,
+      alreadyExecutedQty,
+      alreadyShortStoploss,
+      alreadyShortTakeprofit,
+    },
     isDebug
   ) {
     this.config = {
@@ -54,11 +61,6 @@ module.exports = class Bot {
       listenToLongExit: false,
     };
 
-    this.binance = new Binance().options({
-      APIKEY: process.env.API_KEY,
-      APISECRET: process.env.SECRET_KEY,
-    });
-
     //options
     this.debug = isDebug;
 
@@ -66,12 +68,30 @@ module.exports = class Bot {
     debug(`Bot current state :: {${JSON.stringify(this.state)}}`, isDebug);
 
     //start price stream
-    this.binance.futuresMiniTickerStream(this.config.symbol, this.tick);
+    this.getNewBinnaceObject().futuresMiniTickerStream(
+      this.config.symbol,
+      this.tick
+    );
+
+    // //already in trade
+    // if(alreadySide){
+    //   if(alreadySide===SHORT){
+    //     this.state.executedQty = alreadyExecutedQty;
+
+    //   }
+    // }
+  }
+
+  getNewBinnaceObject() {
+    return new Binance().options({
+      APIKEY: process.env.API_KEY,
+      APISECRET: process.env.SECRET_KEY,
+    });
   }
 
   async getBalanceInUSDT() {
     try {
-      const account = await this.binance.futuresAccount();
+      const account = await this.getNewBinnaceObject().futuresAccount();
       return account.assets[0].walletBalance;
     } catch (error) {
       logError(`Error getting balance in USDT ::: ${error}`);
@@ -113,7 +133,7 @@ module.exports = class Bot {
     try {
       const maxTradeAmount = await this.getMaxTradeAmount();
 
-      const order = await this.binance.futuresMarketBuy(
+      const order = await this.getNewBinnaceObject().futuresMarketBuy(
         this.config.symbol,
         maxTradeAmount,
         {
@@ -134,7 +154,7 @@ module.exports = class Bot {
     try {
       const maxTradeAmount = await this.getMaxTradeAmount();
 
-      const order = await this.binance.futuresMarketSell(
+      const order = await this.getNewBinnaceObject().futuresMarketSell(
         this.config.symbol,
         maxTradeAmount,
         {
@@ -192,9 +212,12 @@ module.exports = class Bot {
 
   getOrderStatus = async (orderId) => {
     try {
-      return await this.binance.futuresOrderStatus(this.config.symbol, {
-        orderId: "" + orderId,
-      });
+      return await this.getNewBinnaceObject().futuresOrderStatus(
+        this.config.symbol,
+        {
+          orderId: "" + orderId,
+        }
+      );
     } catch (error) {
       logError(`Failed to get order status ::: ${error}`);
     }
@@ -202,9 +225,12 @@ module.exports = class Bot {
 
   cancelLimitOrder = async (orderId) => {
     try {
-      return await this.binance.futuresCancel(this.config.symbol, {
-        orderId: "" + orderId,
-      });
+      return await this.getNewBinnaceObject().futuresCancel(
+        this.config.symbol,
+        {
+          orderId: "" + orderId,
+        }
+      );
     } catch (error) {
       logError(`Failed to cancel limit order ::: ${error}`);
       return null;
@@ -212,6 +238,7 @@ module.exports = class Bot {
   };
 
   longExitListener = async () => {
+    logWarn("(LONG)...");
     try {
       const { executedQty } = await this.getOrderStatus(
         this.state.takeProfitOrderId
@@ -248,6 +275,7 @@ module.exports = class Bot {
   };
 
   shortExitListener = async () => {
+    logWarn("(SHORT)...");
     try {
       const { executedQty } = await this.getOrderStatus(
         this.state.takeProfitOrderId
@@ -299,7 +327,7 @@ module.exports = class Bot {
         (orderAvgPrice / 100) * this.config.shortTakeprofitPercentage;
 
       //place take profit limit order
-      const takeProfitOrder = await this.binance.futuresBuy(
+      const takeProfitOrder = await this.getNewBinnaceObject().futuresBuy(
         this.config.symbol,
         order.executedQty,
         this.state.shortTakeprofit.toFixed(2)
@@ -342,7 +370,7 @@ module.exports = class Bot {
         (orderAvgPrice / 100) * this.config.longTakeprofitPercentage;
 
       //place take profit limit order
-      const takeProfitOrder = await this.binance.futuresSell(
+      const takeProfitOrder = await this.getNewBinnaceObject().futuresSell(
         this.config.symbol,
         order.executedQty,
         this.state.longTakeprofit.toFixed(2)
@@ -375,7 +403,7 @@ module.exports = class Bot {
         startListening(this.onAlert);
         log(`Bot has started...`);
         logInfo(`Balance is ${await this.getBalanceInUSDT()} USDT`);
-        const margin = await this.binance.futuresLeverage(
+        const margin = await this.getNewBinnaceObject().futuresLeverage(
           this.config.symbol,
           this.config.margin
         );
