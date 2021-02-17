@@ -43,7 +43,7 @@ const config = {
 //   alreadyShortTakeprofit: 1749.798134,
 // };
 
-let bot = new Bot(config, alreadyInTrade, true);
+let bot = new Bot(config, true);
 setTimeout(() => {
   bot.startBot();
 }, 3000);
