@@ -35,14 +35,6 @@ const config = {
   longTakeprofit: process.env.longTakeprofit,
 };
 
-// const alreadyInTrade = {
-//   alreadySide: "short",
-//   alreadyEntryPrice: 1767.83,
-//   alreadyExecutedQty: 0.568,
-//   alreadyShortStoploss: 1803.1866,
-//   alreadyShortTakeprofit: 1749.798134,
-// };
-
 let bot = new Bot(config, true);
 setTimeout(() => {
   bot.startBot();

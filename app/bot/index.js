@@ -21,13 +21,6 @@ module.exports = class Bot {
       longStoploss,
       longTakeprofit,
     },
-    {
-      alreadySide,
-      alreadyEntryPrice,
-      alreadyExecutedQty,
-      alreadyShortStoploss,
-      alreadyShortTakeprofit,
-    },
     isDebug
   ) {
     this.config = {
@@ -72,14 +65,6 @@ module.exports = class Bot {
       this.config.symbol,
       this.tick
     );
-
-    // //already in trade
-    // if(alreadySide){
-    //   if(alreadySide===SHORT){
-    //     this.state.executedQty = alreadyExecutedQty;
-
-    //   }
-    // }
   }
 
   getNewBinnaceObject() {
@@ -399,7 +384,37 @@ module.exports = class Bot {
 
   startBot = async () => {
     try {
-      if (this.state.currentPrice !== null && this.state.isStreamReady) {
+      if (process.env.exitMode == "true") {
+        logWarn("in exitMode");
+        this.state.side = process.env.alreadyTradeSide;
+        this.state.executedQty = parseFloat(process.env.alreadyTradeQty);
+        if (this.state.side === SHORT) {
+          this.state.shortStoploss = parseFloat(
+            process.env.alreadyTradeStoploss
+          );
+          this.state.shortTakeprofit = parseFloat(
+            process.env.alreadyTradeTakeprofit
+          );
+          logWarn("SET stoploss & takeprofit");
+        }
+        if (process.env.placeTakeProfitOrder == "true") {
+          //place take profit limit order
+          const takeProfitOrder = await this.getNewBinnaceObject().futuresBuy(
+            this.config.symbol,
+            this.state.executedQty,
+            this.state.shortTakeprofit.toFixed(2)
+          );
+
+          this.state.takeProfitOrderId = takeProfitOrder.orderId;
+          this.state.side = SHORT;
+          logInfo(
+            `Take profit limit order placed. id: ${takeProfitOrder.orderId} symbol: ${takeProfitOrder.symbol} status: ${takeProfitOrder.status} price: ${takeProfitOrder.price} origQty: ${takeProfitOrder.origQty} executedQty: ${takeProfitOrder.executedQty}`
+          );
+        }
+        this.state.listenToShortExit = true;
+        logWarn("(SHORT) Listening for a exit..");
+        this.shortExitListener();
+      } else if (this.state.currentPrice !== null && this.state.isStreamReady) {
         startListening(this.onAlert);
         log(`Bot has started...`);
         logInfo(`Balance is ${await this.getBalanceInUSDT()} USDT`);
