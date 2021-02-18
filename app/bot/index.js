@@ -52,49 +52,123 @@ module.exports = class Bot {
       isBotStarting: false,
       listenToShortExit: false,
       listenToLongExit: false,
+
+      activeShortListener: null,
+      activeLongListener: null,
     };
 
     //options
     this.debug = isDebug;
 
+    this.Binance = new Binance().options({
+      APIKEY: process.env.API_KEY,
+      APISECRET: process.env.SECRET_KEY,
+      useServerTime: true,
+      recvWindow: 6000000, // Set a higher recvWindow to increase response timeout
+      verbose: true, // Add extra output when subscribing to WebSockets, etc
+      log: (log) => {
+        console.log(log); // You can create your own logger here, or disable console output
+      },
+    });
+
     debug(`Bot configured :: ${JSON.stringify(this.config)}`, isDebug);
     debug(`Bot current state :: {${JSON.stringify(this.state)}}`, isDebug);
 
     //start price stream
-    this.getNewBinnaceObject().futuresMiniTickerStream(
-      this.config.symbol,
-      this.tick
-    );
+    this.Binance.futuresMiniTickerStream(this.config.symbol, this.tick);
   }
 
-  getNewBinnaceObject() {
-    return new Binance().options({
-      APIKEY: process.env.API_KEY,
-      APISECRET: process.env.SECRET_KEY,
-    });
+  asyncTimeout(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  // Binance {
+  //   return new Binance().options({
+  //     APIKEY: process.env.API_KEY,
+  //     APISECRET: process.env.SECRET_KEY,
+  //   });
+  // }
+
+  //on failed api call
+  async onFailedApiCall(
+    apiCallFunction,
+    apiFunctionParamas = null,
+    caller,
+    ...expectedOutputParams
+  ) {
+    let isApiCallSuccess = false;
+    let data = null;
+    let returnedData = null;
+
+    do {
+      try {
+        //handle calling binnace api and passing args
+        if (apiFunctionParamas === null) data = await apiCallFunction();
+        else data = await apiCallFunction(...apiFunctionParamas);
+
+        if (data["code"] === -1022) {
+          logError("YESS");
+          this.Binance = new Binance().options({
+            APIKEY: process.env.API_KEY,
+            APISECRET: process.env.SECRET_KEY,
+            useServerTime: true,
+            recvWindow: 6000000, // Set a higher recvWindow to increase response timeout
+            verbose: true, // Add extra output when subscribing to WebSockets, etc
+            log: (log) => {
+              console.log(log); // You can create your own logger here, or disable console output
+            },
+          });
+        }
+        //capture original data
+        returnedData = data;
+
+        //check for expected output data
+        expectedOutputParams.map((item, idx) => {
+          data = data[item];
+        });
+        if (data) {
+          // logWarn(data);
+          isApiCallSuccess = true;
+        } else {
+          logWarn(
+            `${caller} returned unexpected data... data: ${JSON.stringify(
+              returnedData
+            )}`
+          );
+          throw "err";
+        }
+      } catch (error) {
+        logWarn(`failed calling ${caller}`);
+        logWarn("Retrying in 3 seconds...");
+        await this.asyncTimeout(3000);
+      }
+    } while (!isApiCallSuccess);
+
+    return data;
   }
 
   async getBalanceInUSDT() {
     try {
-      const account = await this.getNewBinnaceObject().futuresAccount();
-      return account.assets[0].walletBalance;
+      const funcRef = this.Binance.futuresAccount;
+      const account = await this.onFailedApiCall(
+        funcRef,
+        null,
+        "getBalanceInUSDT()",
+        "assets",
+        0,
+        "walletBalance"
+      );
+      return account;
     } catch (error) {
-      logError(`Error getting balance in USDT ::: ${error}`);
+      logError(`Error getBalanceInUSDT ${error}`);
     }
   }
 
   //Calculate the maximum tradeable amount
   async getMaxTradeAmount() {
     try {
-      let balance = null;
-      while (balance == null) {
-        try {
-          balance = await this.getBalanceInUSDT();
-        } catch (error) {
-          logError(`failed to get balance, trying again...`);
-          balance = null;
-        }
-      }
+      const balance = await this.getBalanceInUSDT();
+
       //Calculating max trade amount
       const maxTradeAmount =
         Math.floor(
@@ -110,15 +184,18 @@ module.exports = class Bot {
 
   //Price stream tick, updates when price changes
   tick = (symbolData) => {
-    this.state.currentPrice = symbolData.close;
-    this.state.isStreamReady = true;
+    if (symbolData.close) {
+      this.state.currentPrice = symbolData.close;
+      this.state.isStreamReady = true;
+    } else {
+      logError("Error, close price stream is undefined!");
+    }
   };
 
   placeMarketOrderBuy = async (msg = "Long") => {
     try {
       const maxTradeAmount = await this.getMaxTradeAmount();
-
-      const order = await this.getNewBinnaceObject().futuresMarketBuy(
+      const order = await this.Binance.futuresMarketBuy(
         this.config.symbol,
         maxTradeAmount,
         {
@@ -139,7 +216,7 @@ module.exports = class Bot {
     try {
       const maxTradeAmount = await this.getMaxTradeAmount();
 
-      const order = await this.getNewBinnaceObject().futuresMarketSell(
+      const order = await this.Binance.futuresMarketSell(
         this.config.symbol,
         maxTradeAmount,
         {
@@ -197,11 +274,12 @@ module.exports = class Bot {
 
   getOrderStatus = async (orderId) => {
     try {
-      return await this.getNewBinnaceObject().futuresOrderStatus(
-        this.config.symbol,
-        {
-          orderId: "" + orderId,
-        }
+      const funcRef = await this.Binance.futuresOrderStatus;
+      return await this.onFailedApiCall(
+        funcRef,
+        [this.config.symbol, { orderId: "" + orderId }],
+        "getOrderStatus()",
+        "executedQty"
       );
     } catch (error) {
       logError(`Failed to get order status ::: ${error}`);
@@ -210,12 +288,9 @@ module.exports = class Bot {
 
   cancelLimitOrder = async (orderId) => {
     try {
-      return await this.getNewBinnaceObject().futuresCancel(
-        this.config.symbol,
-        {
-          orderId: "" + orderId,
-        }
-      );
+      return await this.Binance.futuresCancel(this.config.symbol, {
+        orderId: "" + orderId,
+      });
     } catch (error) {
       logError(`Failed to cancel limit order ::: ${error}`);
       return null;
@@ -225,7 +300,7 @@ module.exports = class Bot {
   longExitListener = async () => {
     logWarn("(LONG)...");
     try {
-      const { executedQty } = await this.getOrderStatus(
+      const executedQty = await this.getOrderStatus(
         this.state.takeProfitOrderId
       );
       if (this.state.listenToLongExit) {
@@ -249,9 +324,8 @@ module.exports = class Bot {
           this.state.listenToLongExit = false;
           this.state.side = null;
         } else {
-          setTimeout(() => {
-            this.longExitListener();
-          }, 1000);
+          await this.asyncTimeout(3000);
+          this.longExitListener();
         }
       }
     } catch (error) {
@@ -259,12 +333,12 @@ module.exports = class Bot {
     }
   };
 
-  shortExitListener = async () => {
-    logWarn("(SHORT)...");
+  shortExitListener2 = async () => {
     try {
-      const { executedQty } = await this.getOrderStatus(
+      const executedQty = await this.getOrderStatus(
         this.state.takeProfitOrderId
       );
+      logWarn(`${new Date().toString()} short... execQTY:${executedQty}`);
       if (this.state.listenToShortExit) {
         //Check if takeprofit order is filled
         if (executedQty === this.state.executedQty) {
@@ -286,9 +360,8 @@ module.exports = class Bot {
           this.state.listenToShortExit = false;
           this.state.side = null;
         } else {
-          setTimeout(() => {
-            this.shortExitListener();
-          }, 1000);
+          await this.asyncTimeout(3000);
+          this.shortExitListener();
         }
       }
     } catch (error) {
@@ -312,7 +385,7 @@ module.exports = class Bot {
         (orderAvgPrice / 100) * this.config.shortTakeprofitPercentage;
 
       //place take profit limit order
-      const takeProfitOrder = await this.getNewBinnaceObject().futuresBuy(
+      const takeProfitOrder = await this.Binance.futuresBuy(
         this.config.symbol,
         order.executedQty,
         this.state.shortTakeprofit.toFixed(2)
@@ -355,7 +428,7 @@ module.exports = class Bot {
         (orderAvgPrice / 100) * this.config.longTakeprofitPercentage;
 
       //place take profit limit order
-      const takeProfitOrder = await this.getNewBinnaceObject().futuresSell(
+      const takeProfitOrder = await this.Binance.futuresSell(
         this.config.symbol,
         order.executedQty,
         this.state.longTakeprofit.toFixed(2)
@@ -382,55 +455,111 @@ module.exports = class Bot {
     }
   };
 
-  startBot = async () => {
-    try {
-      if (process.env.exitMode == "true") {
-        logWarn("in exitMode");
-        this.state.side = process.env.alreadyTradeSide;
-        this.state.executedQty = parseFloat(process.env.alreadyTradeQty);
-        if (this.state.side === SHORT) {
-          this.state.shortStoploss = parseFloat(
-            process.env.alreadyTradeStoploss
-          );
-          this.state.shortTakeprofit = parseFloat(
-            process.env.alreadyTradeTakeprofit
-          );
-          logWarn("SET stoploss & takeprofit");
-        }
-        if (process.env.placeTakeProfitOrder == "true") {
-          //place take profit limit order
-          const takeProfitOrder = await this.getNewBinnaceObject().futuresBuy(
-            this.config.symbol,
-            this.state.executedQty,
-            this.state.shortTakeprofit.toFixed(2)
-          );
-
-          this.state.takeProfitOrderId = takeProfitOrder.orderId;
-          this.state.side = SHORT;
-          logInfo(
-            `Take profit limit order placed. id: ${takeProfitOrder.orderId} symbol: ${takeProfitOrder.symbol} status: ${takeProfitOrder.status} price: ${takeProfitOrder.price} origQty: ${takeProfitOrder.origQty} executedQty: ${takeProfitOrder.executedQty}`
-          );
-        }
-        this.state.listenToShortExit = true;
-        logWarn("(SHORT) Listening for a exit..");
-        this.shortExitListener();
-      } else if (this.state.currentPrice !== null && this.state.isStreamReady) {
-        startListening(this.onAlert);
-        log(`Bot has started...`);
-        logInfo(`Balance is ${await this.getBalanceInUSDT()} USDT`);
-        const margin = await this.getNewBinnaceObject().futuresLeverage(
-          this.config.symbol,
-          this.config.margin
+  startShortExitListener = async () => {
+    const listener = async () => {
+      if (this.state.listenToShortExit) {
+        //check if take profit order is filled
+        const executedQty = await this.getOrderStatus(
+          this.state.takeProfitOrderId
         );
-        logInfo(`Margin adjusted to x${margin.leverage}`);
-        logInfo(
-          `Your max trading amount is  ${await this.getMaxTradeAmount(
-            this.state.currentPrice
-          )}`
-        );
+        // console.log("orderId", this.state.takeProfitOrderId);
+        logWarn(`${new Date().toString()} short... execQTY:${executedQty}`);
       }
-    } catch (error) {
-      logError(`Failed to start the bot ::: ${error}`);
-    }
+      //check if stoloss is hit
+    };
+
+    return setInterval(listener, 2000);
+  };
+
+  stopShortExitListener = () => {
+    clearInterval(this.state.activeShortListener);
+    log("stopped short exit listner...");
+  };
+
+  startBot = async () => {
+    // try {
+    //   if (process.env.exitMode == "true") {
+    //     logWarn("in exitMode");
+    //     this.state.side = process.env.alreadyTradeSide;
+    //     this.state.executedQty = parseFloat(process.env.alreadyTradeQty);
+    //     if (this.state.side === SHORT) {
+    //       this.state.shortStoploss = parseFloat(
+    //         process.env.alreadyTradeStoploss
+    //       );
+    //       this.state.shortTakeprofit = parseFloat(
+    //         process.env.alreadyTradeTakeprofit
+    //       );
+    //       logWarn("SET stoploss & takeprofit");
+    //     }
+    //     if (process.env.placeTakeProfitOrder == "true") {
+    //       //place take profit limit order
+    //       const takeProfitOrder = await this.Binance.futuresBuy(
+    //         this.config.symbol,
+    //         this.state.executedQty,
+    //         this.state.shortTakeprofit.toFixed(2)
+    //       );
+
+    //       this.state.takeProfitOrderId = takeProfitOrder.orderId;
+    //       this.state.side = SHORT;
+    //       logInfo(
+    //         `Take profit limit order placed. id: ${takeProfitOrder.orderId} symbol: ${takeProfitOrder.symbol} status: ${takeProfitOrder.status} price: ${takeProfitOrder.price} origQty: ${takeProfitOrder.origQty} executedQty: ${takeProfitOrder.executedQty}`
+    //       );
+    //     }
+    //     this.state.listenToShortExit = true;
+    //     logWarn("(SHORT) Listening for a exit..");
+    //     this.shortExitListener();
+    //   } else if (this.state.currentPrice !== null && this.state.isStreamReady) {
+    //     startListening(this.onAlert);
+    //     log(`Bot has started...`);
+    //     logInfo(`Balance is ${await this.getBalanceInUSDT()} USDT`);
+    //     const margin = await this.Binance.futuresLeverage(
+    //       this.config.symbol,
+    //       this.config.margin
+    //     );
+    //     logInfo(`Margin adjusted to x${margin.leverage}`);
+    //     logInfo(
+    //       `Your max trading amount is  ${await this.getMaxTradeAmount(
+    //         this.state.currentPrice
+    //       )}`
+    //     );
+    //   }
+    // } catch (error) {
+    //   logError(`Failed to start the bot ::: ${error}`);
+    // }
+    // log(` ${await this.getBalanceInUSDT()} `);
+
+    //listen for exits
+    this.state.currentPrice = 1894;
+    this.state.shortStoploss = 2000;
+    this.state.listenToShortExit = true;
+
+    const maxTrade = await this.getMaxTradeAmount();
+    //place take profit limit order
+    const takeProfitOrder = await this.Binance.futuresBuy(
+      "ETHUSDT",
+      maxTrade,
+      1800
+    );
+
+    this.state.takeProfitOrderId = takeProfitOrder.orderId;
+    log(`${JSON.stringify(takeProfitOrder)}`);
+
+    // this.state.activeShortListener = this.shortExitListener();
+
+    this.state.activeShortListener = await this.startShortExitListener();
+
+    // await this.asyncTimeout(8000);
+    // log("cancelling...");
+    // this.stopShortExitListener();
+
+    // await this.asyncTimeout(8000);
+    // log("staring again...");
+    // this.state.activeShortListener = await this.startShortExitListener();
+
+    // while (true) {
+    //   const status = await this.getOrderStatus(takeProfitOrder.orderId);
+    //   await this.asyncTimeout(3000);
+    //   log(`${JSON.stringify(status)}`);
+    // }
   };
 };
