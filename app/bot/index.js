@@ -1,177 +1,158 @@
-const Binance = require("node-binance-api");
-const {
-  logError,
-  logWarn,
-  log,
-  logInfo,
-  debug,
-  setDebugMode,
-} = require("../logger");
-
-const { startListening } = require("../email");
-const { LONG, SHORT } = require("./constants");
+const Binance = require("node-binance-api-ext");
+const { startListening, parseAlert } = require("../email");
+const { LONG, SHORT, STOPLOSS } = require("./constants");
 
 module.exports = class Bot {
-  constructor(
-    {
-      symbol,
-      margin,
-      shortStoploss,
-      shortTakeprofit,
-      longStoploss,
-      longTakeprofit,
-    },
-    isDebug
-  ) {
-    this.config = {
-      symbol: symbol,
-      margin: margin,
-
-      shortStoplossPercentage: shortStoploss,
-      shortTakeprofitPercentage: shortTakeprofit,
-      longStoplossPercentage: longStoploss,
-      longTakeprofitPercentage: longTakeprofit,
-    };
-
-    this.state = {
-      side: null,
-
-      shortStoploss: null,
-      shortTakeprofit: null,
-      longStoploss: null,
-      longTakeprofit: null,
-
-      orderId: null,
-      executedQty: null,
-      currentPrice: null,
-      currentProfit: null,
-      takeProfitOrderId: null,
-
-      isStreamReady: false,
-      isBotOn: false,
-      isBotStarting: false,
-      listenToShortExit: false,
-      listenToLongExit: false,
-
-      activeListener: null,
-    };
-
-    //options
-    this.debug = isDebug;
-
-    this.Binance = new Binance().options({
+  constructor({ symbol, leverage }) {
+    this.binance = Binance({
       APIKEY: process.env.API_KEY,
       APISECRET: process.env.SECRET_KEY,
-      useServerTime: true,
-      recvWindow: 6000000, // Set a higher recvWindow to increase response timeout
-      verbose: true, // Add extra output when subscribing to WebSockets, etc
-      log: (log) => {
-        console.log(log); // You can create your own logger here, or disable console output
-      },
     });
 
-    debug(`Bot configured :: ${JSON.stringify(this.config)}`, isDebug);
-    debug(`Bot current state :: {${JSON.stringify(this.state)}}`, isDebug);
+    this.config = {
+      symbol: symbol,
+      leverage: leverage,
+    };
+    this.state = {
+      fundingRate: 0,
+      streamHasStarted: false,
+      streamOk: false,
 
-    //start price stream
-    this.Binance.futuresMiniTickerStream(this.config.symbol, this.tick);
+      side: null,
+      entryPrice: 0,
+      currentPrice: 0,
+
+      limitOrderId: null,
+      qty: 0,
+      limitOrderListener: null,
+    };
   }
 
-  asyncTimeout(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
+  //starts bot
+  start = async () => {
+    // console.log("Balance:", await this.getBalanceInUSDT(), "USDT");
+    // console.log("Leverage", "x" + (await this.setLeverage()));
 
-  // Binance {
-  //   return new Binance().options({
-  //     APIKEY: process.env.API_KEY,
-  //     APISECRET: process.env.SECRET_KEY,
-  //   });
-  // }
+    // const limitOrder = await this.placeLimitOrder(LONG);
+    // this.state.limitOrderId = limitOrder.orderId;
+    // console.log("Limit Buy Order", limitOrder);
+    this.startTickerStream();
+  };
 
-  //on failed api call
-  async onFailedApiCall(
-    apiCallFunction,
-    apiFunctionParamas = null,
-    caller,
-    ...expectedOutputParams
-  ) {
-    let isApiCallSuccess = false;
-    let data = null;
-    let returnedData = null;
+  trade = async () => {
+    console.log("Balance:", await this.getBalanceInUSDT(), "USDT");
+    console.log("Leverage:", "x" + (await this.setLeverage()));
+    console.log("Max trade qty:", await this.getMaxTradeAmount());
 
-    do {
-      try {
-        //handle calling binnace api and passing args
-        if (apiFunctionParamas === null) data = await apiCallFunction();
-        else data = await apiCallFunction(...apiFunctionParamas);
-
-        if (data["code"] === -1022) {
-          logError("YESS");
-          this.Binance = new Binance().options({
-            APIKEY: process.env.API_KEY,
-            APISECRET: process.env.SECRET_KEY,
-            useServerTime: true,
-            recvWindow: 6000000, // Set a higher recvWindow to increase response timeout
-            verbose: true, // Add extra output when subscribing to WebSockets, etc
-            log: (log) => {
-              console.log(log); // You can create your own logger here, or disable console output
-            },
-          });
-        }
-        //capture original data
-        returnedData = data;
-
-        //check for expected output data
-        expectedOutputParams.map((item, idx) => {
-          data = data[item];
-        });
-        if (data) {
-          // logWarn(data);
-          isApiCallSuccess = true;
-        } else {
-          logWarn(
-            `${caller} returned unexpected data... data: ${JSON.stringify(
-              returnedData
-            )}`
+    startListening(async (alertType) => {
+      switch (alertType) {
+        case STOPLOSS:
+          //exit curent short position
+          if (this.state.side === SHORT) {
+            console.log(
+              "Exited current short",
+              await this.placeMarketOrder(LONG, this.state.qty)
+            );
+            this.state.side = null;
+          }
+          //exit curent long position
+          else if (this.state.side === LONG) {
+            console.log(
+              "Exited current long",
+              await this.placeMarketOrder(SHORT, this.state.qty)
+            );
+            this.state.side = null;
+          }
+          break;
+        case LONG:
+          if (this.state.side === SHORT) {
+            //exit curent short position
+            console.log(
+              "Exited current short",
+              await this.placeMarketOrder(LONG, this.state.qty)
+            );
+          }
+          //enter new short position
+          console.log("Placed new long position", await this.placeTrade(LONG));
+          break;
+        case SHORT:
+          if (this.state.side === LONG) {
+            //exit curent long position
+            console.log(
+              "Exited current long",
+              await this.placeMarketOrder(SHORT, this.state.qty)
+            );
+          }
+          //enter new long position
+          console.log(
+            "Placed new short position",
+            await this.placeTrade(SHORT)
           );
-          throw "err";
-        }
-      } catch (error) {
-        logWarn(`failed calling ${caller}`);
-        logWarn("Retrying in 3 seconds...");
-        await this.asyncTimeout(3000);
+          break;
+        default:
+          console.log("unknown alert!");
+          break;
       }
-    } while (!isApiCallSuccess);
+    });
+  };
 
-    return { data: data, returnedData: returnedData };
-  }
+  placeTrade = async (side) => {
+    if (!side) return { error: "side is not specified" };
 
-  async getBalanceInUSDT() {
     try {
-      const funcRef = this.Binance.futuresAccount;
-      const { data: account, returnedData } = await this.onFailedApiCall(
-        funcRef,
-        null,
-        "getBalanceInUSDT()",
-        "assets",
-        0,
-        "walletBalance"
-      );
-      return account;
+      const qty = await this.getMaxTradeAmount();
+      const order = await this.placeMarketOrder(side, qty);
+      this.state.qty = order.origQty;
+      this.state.side = side;
+      this.state.entryPrice = order.avgPrice;
+      return order;
     } catch (error) {
-      logError(`Error getBalanceInUSDT ${error}`);
+      return { error: error };
     }
-  }
+  };
+
+  placeReducingLimitOrder = async (tries) => {
+    //place a limit order with current price
+    //timeout
+    //check if filled
+    //no
+    //if tries > 0
+    //tries - 1 & call place this func again
+    //else
+    //place a market order
+    //yes
+    //done
+  };
+
+  //get current funding rate
+  getFundingRate = async () => {
+    try {
+      this.state.fundingRate = await this.binance.futures.exchangeInfo();
+      return JSON.stringify(this.state.fundingRate);
+    } catch (error) {
+      return { error: error };
+    }
+  };
+
+  //get current balance balance in USDT
+  getBalanceInUSDT = async () => {
+    try {
+      const res = await this.binance.futures.balance();
+      return parseFloat(res.USDT.available).toFixed(2);
+    } catch (error) {
+      return { error: error };
+    }
+  };
 
   //Calculate the maximum tradeable amount
-  async getMaxTradeAmount() {
+  getMaxTradeAmount = async () => {
     try {
       const balance = await this.getBalanceInUSDT();
 
       //Calculating max trade amount
       const maxTradeAmount =
         Math.floor(
-          ((balance * this.config.margin) / this.state.currentPrice) * 1000
+          ((balance * this.config.leverage) / this.state.currentPrice) * 1000
         ) / 1000;
 
       // error margin of 0.01% just to be safe.
@@ -179,420 +160,140 @@ module.exports = class Bot {
     } catch (error) {
       logError(`Failed to get max trade amount ::: ${error}`);
     }
-  }
-
-  //Price stream tick, updates when price changes
-  tick = (symbolData) => {
-    if (symbolData.close) {
-      this.state.currentPrice = symbolData.close;
-      this.state.isStreamReady = true;
-    } else {
-      logError("Error, close price stream is undefined!");
-    }
   };
 
-  placeMarketOrderBuy = async (msg = "Long") => {
-    try {
-      const maxTradeAmount = await this.getMaxTradeAmount();
-      const order = await this.Binance.futuresMarketBuy(
-        this.config.symbol,
-        maxTradeAmount,
-        {
-          newOrderRespType: "RESULT",
+  startTickerStream = () => {
+    this.binance.webSocket.futuresMiniTickerStream(
+      this.config.symbol,
+      async ({ close }) => {
+        this.state.currentPrice = close;
+        // console.log(this.state.currentPrice);
+        if (!this.state.streamHasStarted) {
+          this.state.streamHasStarted = true;
+          await this.trade();
         }
-      );
-      let { orderId, symbol, status, avgPrice, origQty } = order;
-      logInfo(
-        `${msg} market order placed. id: ${orderId} symbol: ${symbol} status: ${status} avgPrice: ${avgPrice} origQty: ${origQty}`
-      );
-      return order;
-    } catch (error) {
-      logError(`Failed to place market buy order ::: ${error}`);
-    }
+      }
+    );
   };
 
-  placeMarketOrderSell = async (msg = "Short") => {
+  //adjust leverage
+  setLeverage = async () => {
     try {
-      const maxTradeAmount = await this.getMaxTradeAmount();
-
-      const order = await this.Binance.futuresMarketSell(
+      const res = await this.binance.futures.leverage(
         this.config.symbol,
-        maxTradeAmount,
-        {
-          newOrderRespType: "RESULT",
-        }
+        this.config.leverage
       );
-      let { orderId, symbol, status, avgPrice, origQty } = order;
-      logInfo(
-        `${msg} market order placed. id: ${orderId} symbol: ${symbol} status: ${status} avgPrice: ${avgPrice} origQty: ${origQty}`
-      );
-      return order;
+      return res.leverage;
     } catch (error) {
-      logError(`Failed to place market sell order ::: ${error}`);
+      return { error: error };
     }
   };
 
-  onAlert = async (price, side) => {
+  //place a limit order
+  placeLimitOrder = async (side, price, qty = this.state.qty) => {
+    if (!side) return { error: "no side specified" };
+    if (!price) return { error: "no price specified" };
+
     try {
       if (side === LONG) {
-        if (this.state.side === SHORT) {
-          //stop listening to exit
-          this.stopShortExitListener();
-          //cancel takeprofit order
-          this.cancelLimitOrder(this.state.takeProfitOrderId);
-          //exit short position
-          const exitShort = await this.placeMarketOrderBuy("Exit short");
-          logInfo(`Current short position was exited.`);
-          debug(`${JSON.stringify(exitShort)}`, this.debug);
-
-          //go into new long position
-          this.long();
-        } else {
-          this.long();
-        }
+        return await this.binance.futures.buy(this.config.symbol, qty, price);
       } else if (side === SHORT) {
-        if (this.state.side === LONG) {
-          //stop listening to exit
-          this.stopLongExitListener();
-          //cancel takeprofit order
-          this.cancelLimitOrder(this.state.takeProfitOrderId);
-          //exit short position
-          const exitLong = await this.placeMarketOrderSell("Exit long");
-          logInfo(`Current long position was exited.`);
-          debug(`${JSON.stringify(exitLong)}`, this.debug);
-          //go into new long position
-          this.short();
-        } else {
-          this.short();
-        }
+        return await this.binance.futures.sell(this.config.symbol, qty, price);
       }
     } catch (error) {
-      logError(`Failed on alert ::: ${error}`);
+      return { error: error };
     }
   };
 
-  getOrderStatus = async (orderId) => {
+  //place market order
+  placeMarketOrder = async (side, qty = this.state.qty) => {
+    if (!side) return { error: "no side specified" };
+
     try {
-      const funcRef = await this.Binance.futuresOrderStatus;
-      return await this.onFailedApiCall(
-        funcRef,
-        [this.config.symbol, { orderId: "" + orderId }],
-        "getOrderStatus()",
-        "executedQty"
-      );
+      if (side === LONG) {
+        return await this.binance.futures.marketBuy(this.config.symbol, qty);
+      } else if (side === SHORT) {
+        return await this.binance.futures.marketSell(this.config.symbol, qty);
+      }
     } catch (error) {
-      logError(`Failed to get order status ::: ${error}`);
+      return { error: error };
     }
   };
 
-  cancelLimitOrder = async (orderId) => {
+  //get limit order status
+  getLimitOrderStatus = async (orderId) => {
+    if (!orderId) return { error: "no order id provided" };
+
     try {
-      return await this.Binance.futuresCancel(this.config.symbol, {
-        orderId: "" + orderId,
+      const res = await this.binance.futures.openOrders(this.config.symbol);
+      let order = null;
+      Array.from(res).map((item, idx) => {
+        if (item.orderId == orderId) order = item;
       });
+      if (order) return order;
+      else throw "order was not found";
     } catch (error) {
-      logError(`Failed to cancel limit order ::: ${error}`);
-      return null;
+      return { error: error };
     }
   };
 
-  longExitListener2 = async () => {
-    logWarn("(LONG)...");
+  isOrderFilled = async (orderId) => {
     try {
-      const {
-        data: executedQty,
-        returnedData: orderStatusDetails,
-      } = await this.getOrderStatus(this.state.takeProfitOrderId);
-      if (this.state.listenToLongExit) {
-        //Check if takeprofit order is filled
-        if (executedQty === this.state.executedQty) {
-          //take profit order is complete
-          logInfo(`Take profit order comepleted!`);
-          this.state.listenToLongExit = false;
-          this.state.side = null;
-        }
-        //check if stoploss is met
-        else if (this.state.currentPrice <= this.state.longStoploss) {
-          //cancel takeprofit
-          await this.cancelLimitOrder(this.state.takeProfitOrderId);
-
-          //market exit
-          const stopLossOrder = await this.placeMarketOrderSell(
-            "(LONG) stoploss"
-          );
-
-          this.state.listenToLongExit = false;
-          this.state.side = null;
-        } else {
-          await this.asyncTimeout(3000);
-          this.longExitListener();
-        }
+      const limitOrder = await this.getLimitOrderStatus(orderId);
+      if (limitOrder.executedQty) {
+        return parseFloat(limitOrder.executedQty) ===
+          parseFloat(limitOrder.origQty)
+          ? true
+          : false;
+      } else {
+        this.stopLimitOrderListener();
+        throw "order was not found to check if filled.";
       }
     } catch (error) {
-      logError(`Failed to listen for long exit ::: ${error}`);
+      return { error: error };
     }
   };
 
-  shortExitListener2 = async () => {
+  cancelAllLimitOrders = async () => {
     try {
-      const executedQty = await this.getOrderStatus(
-        this.state.takeProfitOrderId
-      );
-      logWarn(`${new Date().toString()} short... execQTY:${executedQty}`);
-      if (this.state.listenToShortExit) {
-        //Check if takeprofit order is filled
-        if (executedQty === this.state.executedQty) {
-          //take profit order is complete
-          logInfo(`Take profit order comepleted!`);
-          this.state.listenToShortExit = false;
-          this.state.side = null;
-        }
-        //check if stoploss is met
-        else if (this.state.currentPrice >= this.state.shortStoploss) {
-          //cancel takeprofit
-          await this.cancelLimitOrder(this.state.takeProfitOrderId);
-
-          //market exit
-          const stopLossOrder = await this.placeMarketOrderBuy(
-            "(SHORT) stoploss"
-          );
-
-          this.state.listenToShortExit = false;
-          this.state.side = null;
-        } else {
-          await this.asyncTimeout(3000);
-          this.shortExitListener();
-        }
-      }
+      const res = await this.binance.futures.cancelAll(this.config.symbol);
+      if (res.code === 200) return true;
+      else throw "canceling order failed";
     } catch (error) {
-      logError(`Failed to listen for short exit ::: ${error}`);
+      return { error: error };
     }
   };
 
-  short = async () => {
-    try {
-      //place short market order
-      const order = await this.placeMarketOrderSell();
+  //handle starting limit order listener
+  startlimitOrderListener = async () => {
+    //stop any existing listener
+    this.stopLimitOrderListener();
 
-      //calulate and set take profit & stop loss values
-      const orderAvgPrice = parseFloat(order.avgPrice);
-      this.state.executedQty = order.origQty;
-      //percentages calculation
-      this.state.shortStoploss = this.calculatePercentage(
-        orderAvgPrice,
-        this.config.shortStoplossPercentage
-      );
-      this.state.shortTakeprofit = this.calculatePercentage(
-        orderAvgPrice,
-        -1 * this.config.shortTakeprofitPercentage
-      );
-
-      //place take profit limit order
-      const takeProfitOrder = await this.Binance.futuresBuy(
-        this.config.symbol,
-        order.executedQty,
-        this.state.shortTakeprofit
-      );
-
-      this.state.takeProfitOrderId = takeProfitOrder.orderId;
-      this.state.side = SHORT;
-      logInfo(
-        `Take profit limit order placed. id: ${takeProfitOrder.orderId} symbol: ${takeProfitOrder.symbol} status: ${takeProfitOrder.status} price: ${takeProfitOrder.price} origQty: ${takeProfitOrder.origQty} executedQty: ${takeProfitOrder.executedQty}`
-      );
-
-      //start listening to exit strats
-      this.state.listenToShortExit = true;
-      debug(
-        `State after a short position is set ${JSON.stringify(this.state)}`,
-        this.debug
-      );
-      logWarn("(SHORT) Listening for a exit..");
-      this.state.activeListener = await this.startShortExitListener();
-    } catch (error) {
-      logError(`Erorr going short ::: ${error}`);
-      //send err notifcation
-    }
-  };
-
-  long = async () => {
-    try {
-      //place short market order
-      const order = await this.placeMarketOrderBuy();
-
-      //calulate and set take profit & stop loss values
-      const orderAvgPrice = parseFloat(order.avgPrice);
-      this.state.executedQty = order.origQty;
-
-      this.state.longStoploss = this.calculatePercentage(
-        orderAvgPrice,
-        -1 * this.config.longStoplossPercentage
-      );
-      this.state.longTakeprofit = this.calculatePercentage(
-        orderAvgPrice,
-        1 * this.config.longTakeprofitPercentage
-      );
-
-      //place take profit limit order
-      const takeProfitOrder = await this.Binance.futuresSell(
-        this.config.symbol,
-        order.executedQty,
-        this.state.longTakeprofit
-      );
-
-      this.state.takeProfitOrderId = takeProfitOrder.orderId;
-      this.state.side = LONG;
-
-      logInfo(
-        `Take profit limit order placed. id: ${takeProfitOrder.orderId} symbol: ${takeProfitOrder.symbol} status: ${takeProfitOrder.status} price: ${takeProfitOrder.price} origQty: ${takeProfitOrder.origQty} executedQty: ${takeProfitOrder.executedQty}`
-      );
-
-      //start listening to exit strats
-      this.state.listenToLongExit = true;
-      debug(
-        `State after a long position is set ${JSON.stringify(this.state)}`,
-        this.debug
-      );
-      logWarn("(LONG) Listening for a exit..");
-      this.state.activeListener = await this.startLongExitListener();
-    } catch (error) {
-      logError(`Erorr going long ::: ${error}`);
-      //send err notifcation
-    }
-  };
-
-  startShortExitListener = async () => {
     const listener = async () => {
-      if (this.state.listenToShortExit) {
-        const {
-          data: executedQty,
-          returnedData: orderStatusDetails,
-        } = await this.getOrderStatus(this.state.takeProfitOrderId);
-
-        if (orderStatusDetails.status !== "CANCELED") {
-          //check if limit order if filled
-          if (executedQty === this.state.executedQty) {
-            this.stopShortExitListener();
-            logInfo(
-              `Take profit limit order filled! ${JSON.stringify(
-                orderStatusDetails
-              )}`
-            );
-          }
-          logInfo(
-            `${new Date().toString()} listening to short exit... execQTY:${executedQty}`
-          );
-          // logWarn(`${JSON.stringify(orderStatusDetails)}`);
-        } else {
-          logWarn(`takeprofit order was cancelled!`);
-        }
-        //check if stoloss is hit
-        if (this.state.currentPrice >= this.state.shortStoploss) {
-          //first stop the listener being call again.
-          this.stopShortExitListener();
-          //cancel takeprofit
-          await this.cancelLimitOrder(this.state.takeProfitOrderId);
-
-          //market exit
-          const stopLossOrder = await this.placeMarketOrderBuy(
-            "(SHORT) stoploss"
-          );
-          logInfo(
-            `Stoploss hit!, short exited short with market buy order ${JSON.stringify(
-              stopLossOrder
-            )}`
-          );
-        }
+      if (!this.state.limitOrderId)
+        return { error: "listener error, order id was not provided" };
+      try {
+        const res = await this.isOrderFilled(this.state.limitOrderId);
+        console.log("listening...", "res:", res);
+        if (res === true) this.stopLimitOrderListener();
+      } catch (error) {
+        return { error: error };
       }
     };
-    return setInterval(listener, 2000);
+    this.state.limitOrderListener = setInterval(listener, 2500);
+    console.log("limit order listener has started...");
   };
 
-  startLongExitListener = async () => {
-    const listener = async () => {
-      if (this.state.listenToLongExit) {
-        const {
-          data: executedQty,
-          returnedData: orderStatusDetails,
-        } = await this.getOrderStatus(this.state.takeProfitOrderId);
-
-        if (orderStatusDetails.status !== "CANCELED") {
-          //check if limit order if filled
-          if (executedQty === this.state.executedQty) {
-            this.stopLongExitListener();
-            logInfo(
-              `Take profit limit order filled! ${JSON.stringify(
-                orderStatusDetails
-              )}`
-            );
-          }
-          logInfo(
-            `${new Date().toString()} listening to long exit... execQTY:${executedQty}`
-          );
-          // logWarn(`${JSON.stringify(orderStatusDetails)}`);
-        } else {
-          logWarn(`takeprofit order was cancelled!`);
-        }
-        //check if stoloss is hit
-        if (this.state.currentPrice <= this.state.longStoploss) {
-          //first stop the listener being call again.
-          this.stopLongExitListener();
-
-          //cancel takeprofit
-          await this.cancelLimitOrder(this.state.takeProfitOrderId);
-
-          //market exit
-          const stopLossOrder = await this.placeMarketOrderSell(
-            "(LONG) stoploss"
-          );
-          logInfo(
-            `Stoploss hit!, long exited long with market buy order ${JSON.stringify(
-              stopLossOrder
-            )}`
-          );
-        }
-      }
-    };
-    return setInterval(listener, 2500);
-  };
-
-  stopShortExitListener = () => {
-    this.state.listenToShortExit = false;
-    this.state.side = null;
-    clearInterval(this.state.activeListener);
-    log("stopped short exit listner...");
-  };
-
-  stopLongExitListener = () => {
-    this.state.listenToLongExit = false;
-    this.state.side = null;
-    clearInterval(this.state.activeListener);
-    log("stopped long exit listner...");
-  };
-
-  calculatePercentage = (value, percentage) => {
-    percentage = percentage / 100 + 1;
-    return parseFloat(value * percentage).toFixed(2);
-  };
-
-  startBot = async () => {
+  //handle stoping limit order listner
+  stopLimitOrderListener = async () => {
     try {
-      if (this.state.currentPrice !== null && this.state.isStreamReady) {
-        startListening(this.onAlert);
-        log(`Bot has started...`);
-        logInfo(`Balance is ${await this.getBalanceInUSDT()} USDT`);
-        const margin = await this.Binance.futuresLeverage(
-          this.config.symbol,
-          this.config.margin
-        );
-        logInfo(`Margin adjusted to x${margin.leverage}`);
-        logInfo(
-          `Your max trading amount is  ${await this.getMaxTradeAmount(
-            this.state.currentPrice
-          )}`
-        );
+      if (this.state.limitOrderListener !== null) {
+        clearInterval(this.state.limitOrderListener);
+        this.state.limitOrderListener = null;
+        console.log("limit order listener has stoped...");
       }
     } catch (error) {
-      logError(`Failed to start the bot ::: ${error}`);
+      return { error: error };
     }
   };
 };

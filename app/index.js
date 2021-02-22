@@ -20,14 +20,14 @@ app.get("/api/account", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  log("App started...");
-});
+// app.listen(PORT, () => {
+//   log("App started...");
+// });
 
 const config = {
   symbol: "ETHUSDT",
 
-  margin: process.env.margin,
+  leverage: process.env.margin,
   shortStoploss: process.env.shortStoploss,
   shortTakeprofit: process.env.shortTakeprofit,
 
@@ -36,6 +36,4 @@ const config = {
 };
 
 let bot = new Bot(config, true);
-setTimeout(() => {
-  bot.startBot();
-}, 3000);
+bot.start();

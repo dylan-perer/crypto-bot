@@ -1,4 +1,4 @@
-const LONG = "long";
-const SHORT = "short";
-
-module.exports = { LONG, SHORT };
+const LONG = "buy";
+const SHORT = "sell";
+const STOPLOSS = "stoploss";
+module.exports = { LONG, SHORT, STOPLOSS };

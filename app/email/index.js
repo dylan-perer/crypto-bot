@@ -9,23 +9,29 @@ let done = false;
 const parseAlert = (mail, onAlert) => {
   log(mail.subject);
   try {
-    const regex = /(\d+.\d+|\d+)/g;
-    const alertDetails = mail.subject.match(regex);
-    if (
-      (alertDetails[3] && alertDetails[3] === "1111") ||
-      alertDetails[3] === "1000"
-    ) {
-      const side = alertDetails[3] === "1111" ? "long" : "short";
-      logInfo(
-        `ALERT:: ${new Date(mail.date).toDateString()} ${new Date(
-          mail.date
-        ).toTimeString()} ${mail.from[0].address} price: $${
-          alertDetails[0]
-        } @ ${side}`
-      );
-      onAlert(alertDetails[0], side);
+    const subject = mail.subject;
+    const regexSide = /(buy(?=\sposition))|(sell(?=\sposition))/g;
+    const regexTrailStop = /(\s(0(?=$)))/g;
+    const sideRes = subject.match(regexSide);
+    const trailRes = subject.match(regexTrailStop);
+
+    let alert = new Date().toDateString() + " ";
+    console.log(new Date().toDateString(), sideRes);
+
+    let alertType = null;
+
+    if (trailRes !== null) {
+      alert + "stoploss hit";
+      alertType = "stoploss";
+    } else {
+      alert + " new entry " + sideRes;
+      sideRes === "buy" ? "LONG" : "SHORT";
+      alertType = sideRes[0];
     }
-  } catch (error) {}
+    onAlert(alertType);
+  } catch (error) {
+    console.log("Unparseable alert", error);
+  }
 };
 
 const createNewMailListener = (onAlert) => {
@@ -87,4 +93,4 @@ const startListening = async (onAlert) => {
   createNewMailListener(onAlert);
 };
 
-module.exports = { startListening: startListening };
+module.exports = { startListening: startListening, parseAlert: parseAlert };
