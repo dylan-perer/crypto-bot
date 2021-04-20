@@ -3,7 +3,7 @@ const { startListening, parseAlert } = require("../email");
 const { LONG, SHORT, STOPLOSS } = require("./constants");
 
 module.exports = class Bot {
-  constructor({ symbol, leverage }) {
+  constructor({ symbol, leverage, shortSecureProfit, shortPosDeviation }) {
     this.binance = Binance({
       APIKEY: process.env.API_KEY,
       APISECRET: process.env.SECRET_KEY,
@@ -12,6 +12,8 @@ module.exports = class Bot {
     this.config = {
       symbol: symbol,
       leverage: leverage,
+      shortSecureProfit: shortSecureProfit,
+      shortPosDeviation: shortPosDeviation,
     };
     this.state = {
       fundingRate: 0,
@@ -21,10 +23,15 @@ module.exports = class Bot {
       side: null,
       entryPrice: 0,
       currentPrice: 0,
+      markprice: null,
+      priceSavePercen: null,
 
       limitOrderId: null,
       qty: 0,
       limitOrderListener: null,
+
+      shortExitListener: null,
+      shortSecuredPrice: null,
     };
   }
 
@@ -37,12 +44,29 @@ module.exports = class Bot {
     // this.state.limitOrderId = limitOrder.orderId;
     // console.log("Limit Buy Order", limitOrder);
     this.startTickerStream();
+    // this.fakePriceStream(100);
+    // this.state.entryPrice = 100;
+    // this.listenShortExit();
+    // setTimeout(this.listenShortExit, 2500);
+  };
+
+  fakePriceStream = async (p) => {
+    let add = p < 98 ? -0.1 : 0.2;
+    p = p + add;
+    this.state.currentPrice = p;
+
+    setTimeout(() => {
+      this.fakePriceStream(p);
+    }, 1000);
   };
 
   trade = async () => {
     console.log("Balance:", await this.getBalanceInUSDT(), "USDT");
     console.log("Leverage:", "x" + (await this.setLeverage()));
     console.log("Max trade qty:", await this.getMaxTradeAmount());
+    console.log(
+      `shortSecureProfit: ${this.config.shortSecureProfit}% shortPosDeviation: ${this.config.shortPosDeviation}%`
+    );
 
     startListening(async (alertType) => {
       switch (alertType) {
@@ -83,17 +107,81 @@ module.exports = class Bot {
               await this.placeMarketOrder(SHORT, this.state.qty)
             );
           }
-          //enter new long position
+          //enter new short position
           console.log(
             "Placed new short position",
             await this.placeTrade(SHORT)
           );
+          //check for short exit
+          this.listenShortExit();
           break;
         default:
           console.log("unknown alert!");
           break;
       }
     });
+  };
+
+  listenShortExit = async () => {
+    console.log(this.state.currentPrice.toFixed(2));
+    let tradeClosed = false;
+    if (
+      this.state.currentPrice >=
+      this.state.entryPrice * (1 + this.config.shortSecureProfit / 100)
+    ) {
+      console.log(
+        `short position closed, price went up +${this.config.shortSecureProfit}% currentprice: ${this.state.currentPrice} entryprice: ${this.state.entryPrice}`
+      );
+      tradeClosed = true;
+      console.log(
+        "Exited current short",
+        await this.placeMarketOrder(LONG, this.state.qty)
+      );
+      this.state.side = null;
+      this.state.shortSecuredPrice = null;
+      //exit trade, clean state vars
+    } else {
+      //calc secured price if it hits and set it
+      console.log(`currentprice: ${this.state.currentPrice}`);
+      console.log(
+        `asss: ${
+          this.state.shortSecuredPrice *
+          (1 + this.config.shortPosDeviation / 100)
+        }\n\n`
+      );
+      if (this.state.shortSecuredPrice == null) {
+        console.log(`secured price is null still`);
+        const percenToDrop =
+          parseFloat(this.config.shortSecureProfit) +
+          parseFloat(this.config.shortPosDeviation);
+        const lockPrice =
+          this.state.entryPrice - this.state.entryPrice * (percenToDrop / 100);
+
+        if (this.state.currentPrice <= lockPrice) {
+          this.state.shortSecuredPrice = this.state.currentPrice.toFixed(2);
+          console.log(`secured price is set! ${this.state.shortSecuredPrice}`);
+        }
+        //check if price moved up by deviation
+      } else if (
+        this.state.currentPrice >=
+        this.state.shortSecuredPrice * (1 + this.config.shortPosDeviation / 100)
+      ) {
+        console.log(`price went up by 0.2%, closed trade`);
+        tradeClosed = true;
+        console.log(
+          "Exited current short",
+          await this.placeMarketOrder(LONG, this.state.qty)
+        );
+        this.state.side = null;
+        this.state.shortSecuredPrice = null;
+      } else if (this.state.currentPrice <= this.state.shortSecuredPrice) {
+        this.state.shortSecuredPrice = this.state.currentPrice.toFixed(2);
+        console.log(
+          `updated secureed price to ${this.state.shortSecuredPrice}`
+        );
+      }
+      if (!tradeClosed) setTimeout(this.listenShortExit, 1000);
+    }
   };
 
   placeTrade = async (side) => {
@@ -170,10 +258,30 @@ module.exports = class Bot {
         // console.log(this.state.currentPrice);
         if (!this.state.streamHasStarted) {
           this.state.streamHasStarted = true;
+          this.startSpotStream();
           await this.trade();
         }
       }
     );
+  };
+
+  startSpotStream = () => {
+    this.binance.webSocket.miniTicker((markets) => {
+      const { close } = markets[this.config.symbol];
+      this.state.markprice = close;
+      this.state.priceSavePercen = this.calculatePercentageDifference(
+        this.state.markprice,
+        this.state.currentPrice
+      );
+    });
+  };
+
+  calculatePercentageDifference = (a, b) => {
+    a = parseFloat(a);
+    b = parseFloat(b);
+    const abs = Math.abs(a - b);
+    const avg = abs / ((a + b) / 2);
+    return avg;
   };
 
   //adjust leverage

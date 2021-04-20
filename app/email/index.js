@@ -30,7 +30,7 @@ const parseAlert = (mail, onAlert) => {
     }
     onAlert(alertType);
   } catch (error) {
-    console.log("Unparseable alert", error);
+    console.log("Unparseable alert");
   }
 };
 

@@ -28,6 +28,9 @@ const config = {
   symbol: "ETHUSDT",
 
   leverage: process.env.margin,
+  shortSecureProfit: process.env.shortSecureProfit,
+  shortPosDeviation: process.env.shortPosDeviation,
+
   shortStoploss: process.env.shortStoploss,
   shortTakeprofit: process.env.shortTakeprofit,
 
