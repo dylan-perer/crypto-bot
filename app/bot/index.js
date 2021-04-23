@@ -40,10 +40,11 @@ module.exports = class Bot {
     // console.log("Balance:", await this.getBalanceInUSDT(), "USDT");
     // console.log("Leverage", "x" + (await this.setLeverage()));
 
+    this.startTickerStream();
+
     // const limitOrder = await this.placeLimitOrder(LONG);
     // this.state.limitOrderId = limitOrder.orderId;
     // console.log("Limit Buy Order", limitOrder);
-    this.startTickerStream();
     // this.fakePriceStream(100);
     // this.state.entryPrice = 100;
     // this.listenShortExit();
@@ -64,9 +65,9 @@ module.exports = class Bot {
     console.log("Balance:", await this.getBalanceInUSDT(), "USDT");
     console.log("Leverage:", "x" + (await this.setLeverage()));
     console.log("Max trade qty:", await this.getMaxTradeAmount());
-    console.log(
-      `shortSecureProfit: ${this.config.shortSecureProfit}% shortPosDeviation: ${this.config.shortPosDeviation}%`
-    );
+    // console.log(
+    //   `shortSecureProfit: ${this.config.shortSecureProfit}% shortPosDeviation: ${this.config.shortPosDeviation}%`
+    // );
 
     startListening(async (alertType) => {
       switch (alertType) {
@@ -112,8 +113,6 @@ module.exports = class Bot {
             "Placed new short position",
             await this.placeTrade(SHORT)
           );
-          //check for short exit
-          this.listenShortExit();
           break;
         default:
           console.log("unknown alert!");
@@ -122,6 +121,7 @@ module.exports = class Bot {
     });
   };
 
+  //remove?
   listenShortExit = async () => {
     console.log(this.state.currentPrice.toFixed(2));
     let tradeClosed = false;
